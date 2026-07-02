@@ -182,10 +182,10 @@ def _prompt_candidate_choice(candidates: list[dict]) -> dict | None:
         print("Invalid selection.")
 
 
-def cli_add(name: str) -> None:
+def cli_add(name: str, count: int = 10) -> None:
     client_id, client_secret = _require_credentials()
     token = igdb.get_token(client_id, client_secret)
-    candidates = igdb.search_candidates(client_id, token, name)
+    candidates = igdb.search_candidates(client_id, token, name, count)
 
     if not candidates:
         print(f"No IGDB results for '{name}'")
@@ -292,10 +292,10 @@ def cli_set_status(name: str, status: str) -> None:
     print(f"'{game.name}' -> {status}")
 
 
-def cli_search(query: str) -> None:
+def cli_search(query: str, count: int = 10) -> None:
     client_id, client_secret = _require_credentials()
     token = igdb.get_token(client_id, client_secret)
-    candidates = igdb.search_candidates(client_id, token, query)
+    candidates = igdb.search_candidates(client_id, token, query, count)
 
     if not candidates:
         print(f"No IGDB results for '{query}'")
@@ -309,23 +309,30 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Games Backlog — run with no arguments to launch the TUI.")
     group = parser.add_mutually_exclusive_group()
+    group.add_argument("-s", metavar="QUERY", help="Search IGDB and print candidate matches")
     group.add_argument("-a", metavar="NAME", help="Add a game (fetches date + cover from IGDB)")
     group.add_argument("-r", metavar="NAME", help="Remove a game by name")
-    group.add_argument("-s", metavar="QUERY", help="Search IGDB and print candidate matches")
     group.add_argument("-mc", metavar="NAME", help="Mark a game as completed")
     group.add_argument("-mp", metavar="NAME", help="Mark a game as (now) playing")
     group.add_argument(
         "-u", action="store_true", help="Re-check IGDB for unreleased/unknown-date games (date + cover updates)"
     )
     group.add_argument("-su", metavar="NAME", help="Toggle skip-update flag for a game (excludes it from -u)")
+    parser.add_argument("-c", metavar="COUNT", help="Numbers of items to returns for a search/add request")
     args = parser.parse_args()
 
     if args.a:
-        cli_add(args.a)
+        if(args.c):
+            cli_add(args.a, args.c)
+        else:
+            cli_add(args.a)
     elif args.r:
         cli_remove(args.r)
     elif args.s:
-        cli_search(args.s)
+        if(args.c):
+            cli_search(args.s, args.c)
+        else:
+            cli_search(args.s)
     elif args.mc:
         cli_set_status(args.mc, "completed")
     elif args.mp:
