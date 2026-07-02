@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+# personal data / secrets — see config.example.json and README
+library.json
+config.json
+covers/*
+!covers/unknown.png

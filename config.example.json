@@ -1,0 +1,11 @@
+{
+  "igdb_client_id": "your-client-id",
+  "igdb_client_secret": "your-client-secret",
+  "style": {
+    "columns": 4,
+    "accent_color": null,
+    "future_color": "yellow",
+    "header_spacing": 1,
+    "row_spacing": 1
+  }
+}
