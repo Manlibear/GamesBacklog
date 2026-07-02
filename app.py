@@ -3,7 +3,9 @@
 
 import os
 from datetime import date
+from functools import lru_cache
 
+from PIL import Image as PILImage
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Vertical, VerticalScroll
@@ -16,6 +18,27 @@ from library import COVERS_DIR, Game, Library
 
 STATUS_LABELS = {"playing": "PLAYING", "backlog": "BACKLOG", "completed": "COMPLETED"}
 UNKNOWN_COVER = os.path.join(COVERS_DIR, "unknown.png")
+COMPLETED_COVER_OVERLAY = os.path.join(COVERS_DIR, "completed_overlay.png")
+
+
+@lru_cache(maxsize=None)
+def _completed_cover(cover_path: str) -> PILImage.Image:
+    """Cover art with the completed badge pre-composited onto it.
+
+    Two stacked Image widgets over the same cells doesn't work here: Kitty
+    rendering via textual-image works by writing special placeholder glyphs
+    into the terminal's text cells, and Textual's widget layering — like any
+    text-cell compositor — just replaces the lower layer's glyphs wherever
+    the upper layer occupies a cell. The base cover's glyphs never reach the
+    terminal for the overlapped region, so there's nothing for the overlay
+    to alpha-blend against. Compositing the pixels ourselves first sidesteps
+    this — there's only ever one Kitty placement per card.
+    """
+    base = PILImage.open(cover_path).convert("RGBA")
+    overlay = PILImage.open(COMPLETED_COVER_OVERLAY).convert("RGBA")
+    if overlay.size != base.size:
+        overlay = overlay.resize(base.size, PILImage.LANCZOS)
+    return PILImage.alpha_composite(base, overlay)
 
 
 class GameCard(Vertical):
@@ -29,8 +52,9 @@ class GameCard(Vertical):
         # an Image widget with no image reports 0x0 content size, which was
         # collapsing the whole card (and everything below it) when unset.
         cover = self.game.cover if self.game.cover and os.path.exists(self.game.cover) else UNKNOWN_COVER
+        cover_image = _completed_cover(cover) if self.game.status == "completed" else cover
         with Vertical(classes="cover-frame"):
-            yield Image(cover, classes="cover")
+            yield Image(cover_image, classes="cover")
 
         yield Label(self.game.name, classes="game-name")
 
@@ -93,6 +117,7 @@ class BacklogApp(App):
         width: auto;
         height: auto;
     }
+
     .game-card .game-name {
         text-align: center;
         text-style: bold;
