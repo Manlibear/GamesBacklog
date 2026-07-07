@@ -51,8 +51,14 @@ class GameCard(Vertical):
         # consistent whether or not this game actually has a cover image —
         # an Image widget with no image reports 0x0 content size, which was
         # collapsing the whole card (and everything below it) when unset.
-        cover = self.game.cover if self.game.cover and os.path.exists(self.game.cover) else UNKNOWN_COVER
-        cover_image = _completed_cover(cover) if self.game.status == "completed" else cover
+        cover = (
+            self.game.cover
+            if self.game.cover and os.path.exists(self.game.cover)
+            else UNKNOWN_COVER
+        )
+        cover_image = (
+            _completed_cover(cover) if self.game.status == "completed" else cover
+        )
         with Vertical(classes="cover-frame"):
             yield Image(cover_image, classes="cover")
 
@@ -60,7 +66,10 @@ class GameCard(Vertical):
 
         if self.game.release_date:
             is_future = self.game.release_date > date.today().isoformat()
-            yield Label(self.game.release_date, classes="release-date future" if is_future else "release-date")
+            yield Label(
+                self.game.release_date,
+                classes="release-date future" if is_future else "release-date",
+            )
         else:
             yield Label("????-??-??", classes="release-date")
 
@@ -101,15 +110,15 @@ class BacklogApp(App):
         grid-gutter: $row-spacing 2;
         padding: 1 2;
         height: auto;
-        grid-rows: 18;
+        grid-rows: 14;
     }
     .game-card {
         align: center middle;
-        height: 18;
+        height: 14;
         width: 100%;
     }
     .game-card .cover-frame {
-        height: 14;
+        height: 9;
         width: 100%;
         align: center middle;
     }
@@ -199,7 +208,11 @@ def _prompt_candidate_choice(candidates: list[dict]) -> dict | None:
     """Pacman-style disambiguation prompt. Returns None if the user cancels."""
     _print_candidates(candidates)
     while True:
-        choice = input(f"Enter a number (1-{len(candidates)}, or 'c' to cancel): ").strip().lower()
+        choice = (
+            input(f"Enter a number (1-{len(candidates)}, or 'c' to cancel): ")
+            .strip()
+            .lower()
+        )
         if choice in ("c", "cancel", ""):
             return None
         if choice.isdigit() and 1 <= int(choice) <= len(candidates):
@@ -224,16 +237,30 @@ def cli_add(name: str, count: int = 10) -> None:
             print("Cancelled.")
             return
 
-    matched_name, release_date, image_id = match["name"], match["release_date"], match["image_id"]
+    matched_name, release_date, image_id = (
+        match["name"],
+        match["release_date"],
+        match["image_id"],
+    )
 
     cover_path = None
     if image_id:
         cover_path = igdb.download_cover(image_id, matched_name, COVERS_DIR)
 
     lib = Library.load()
-    lib.add(Game(name=matched_name, status="backlog", release_date=release_date, cover=cover_path))
+    lib.add(
+        Game(
+            name=matched_name,
+            status="backlog",
+            release_date=release_date,
+            cover=cover_path,
+        )
+    )
     lib.save()
-    print(f"Added '{matched_name}'" + (f" ({release_date})" if release_date else " (no release date found)"))
+    print(
+        f"Added '{matched_name}'"
+        + (f" ({release_date})" if release_date else " (no release date found)")
+    )
     if not cover_path:
         print("  (no cover art found)")
 
@@ -255,7 +282,11 @@ def cli_update_unreleased() -> None:
     lib = Library.load()
 
     today = date.today().isoformat()
-    targets = [g for g in lib.games if (not g.release_date or g.release_date > today) and not g.skip_update]
+    targets = [
+        g
+        for g in lib.games
+        if (not g.release_date or g.release_date > today) and not g.skip_update
+    ]
     skipped = [g.name for g in lib.games if g.skip_update]
 
     if not targets:
@@ -265,14 +296,19 @@ def cli_update_unreleased() -> None:
     any_changes = False
     for game in targets:
         candidates = igdb.search_candidates(client_id, token, game.name)
-        exact = next((c for c in candidates if c["name"].casefold() == game.name.casefold()), None)
+        exact = next(
+            (c for c in candidates if c["name"].casefold() == game.name.casefold()),
+            None,
+        )
         if not exact:
             print(f"{NAME_COLOR}{game.name}{RESET}: no exact IGDB match, skipped")
             continue
 
         changes = []
         if exact["release_date"] and exact["release_date"] != game.release_date:
-            changes.append(f"date {game.release_date or '????-??-??'} -> {exact['release_date']}")
+            changes.append(
+                f"date {game.release_date or '????-??-??'} -> {exact['release_date']}"
+            )
             game.release_date = exact["release_date"]
 
         if not game.cover and exact["image_id"]:
@@ -302,7 +338,9 @@ def cli_toggle_skip(name: str) -> None:
         return
     game.skip_update = not game.skip_update
     lib.save()
-    state = "will be skipped by -u" if game.skip_update else "will be checked by -u again"
+    state = (
+        "will be skipped by -u" if game.skip_update else "will be checked by -u again"
+    )
     print(f"'{game.name}' -> {state}")
 
 
@@ -332,29 +370,46 @@ def cli_search(query: str, count: int = 10) -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Games Backlog — run with no arguments to launch the TUI.")
+    parser = argparse.ArgumentParser(
+        description="Games Backlog — run with no arguments to launch the TUI."
+    )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-s", metavar="QUERY", help="Search IGDB and print candidate matches")
-    group.add_argument("-a", metavar="NAME", help="Add a game (fetches date + cover from IGDB)")
+    group.add_argument(
+        "-s", metavar="QUERY", help="Search IGDB and print candidate matches"
+    )
+    group.add_argument(
+        "-a", metavar="NAME", help="Add a game (fetches date + cover from IGDB)"
+    )
     group.add_argument("-r", metavar="NAME", help="Remove a game by name")
     group.add_argument("-mc", metavar="NAME", help="Mark a game as completed")
     group.add_argument("-mp", metavar="NAME", help="Mark a game as (now) playing")
+    group.add_argument("-mb", metavar="NAME", help="Mark a in the backlog")
     group.add_argument(
-        "-u", action="store_true", help="Re-check IGDB for unreleased/unknown-date games (date + cover updates)"
+        "-u",
+        action="store_true",
+        help="Re-check IGDB for unreleased/unknown-date games (date + cover updates)",
     )
-    group.add_argument("-su", metavar="NAME", help="Toggle skip-update flag for a game (excludes it from -u)")
-    parser.add_argument("-c", metavar="COUNT", help="Numbers of items to returns for a search/add request")
+    group.add_argument(
+        "-su",
+        metavar="NAME",
+        help="Toggle skip-update flag for a game (excludes it from -u)",
+    )
+    parser.add_argument(
+        "-c",
+        metavar="COUNT",
+        help="Numbers of items to returns for a search/add request",
+    )
     args = parser.parse_args()
 
     if args.a:
-        if(args.c):
+        if args.c:
             cli_add(args.a, args.c)
         else:
             cli_add(args.a)
     elif args.r:
         cli_remove(args.r)
     elif args.s:
-        if(args.c):
+        if args.c:
             cli_search(args.s, args.c)
         else:
             cli_search(args.s)
@@ -362,6 +417,8 @@ if __name__ == "__main__":
         cli_set_status(args.mc, "completed")
     elif args.mp:
         cli_set_status(args.mp, "playing")
+    elif args.mb:
+        cli_set_status(args.mb, "backlog")
     elif args.u:
         cli_update_unreleased()
     elif args.su:
