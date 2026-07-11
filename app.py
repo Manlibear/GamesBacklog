@@ -2,14 +2,17 @@
 """Games Backlog — Textual TUI with real cover art via Kitty's graphics protocol."""
 
 import os
+import shutil
 from datetime import date
 from functools import lru_cache
 
 from PIL import Image as PILImage
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Grid, Vertical, VerticalScroll
-from textual.widgets import Label
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Button, Footer, Input, Label
 from textual_image.widget import Image
 
 import config
@@ -18,12 +21,38 @@ from library import COVERS_DIR, Game, Library
 
 STATUS_LABELS = {"playing": "PLAYING", "backlog": "BACKLOG", "completed": "COMPLETED"}
 UNKNOWN_COVER = os.path.join(COVERS_DIR, "unknown.png")
-COMPLETED_COVER_OVERLAY = os.path.join(COVERS_DIR, "completed_overlay.png")
+MAX_SEARCH_RESULTS = 25
+STATUS_COVER_OVERLAYS = {
+    "completed": os.path.join(COVERS_DIR, "_overlay_completed.png"),
+    "playing": os.path.join(COVERS_DIR, "_overlay_playing.png"),
+    "backlog": os.path.join(COVERS_DIR, "_overlay_backlog.png"),
+}
+
+# Search results get their covers downloaded here rather than into COVERS_DIR
+# directly, since most searches never get added — this dir is wiped on every
+# app start and every new search, and a cover only earns a permanent home in
+# COVERS_DIR once its game is actually marked with a status.
+SEARCH_COVERS_DIR = os.path.join(COVERS_DIR, "search")
+
+
+def _reset_search_covers() -> None:
+    shutil.rmtree(SEARCH_COVERS_DIR, ignore_errors=True)
+    os.makedirs(SEARCH_COVERS_DIR, exist_ok=True)
+
+
+def _promote_cover(cover_path: str | None) -> str | None:
+    """Copies a search-temp cover into the permanent covers dir, if needed."""
+    if not cover_path or not cover_path.startswith(SEARCH_COVERS_DIR):
+        return cover_path
+    dest = os.path.join(COVERS_DIR, os.path.basename(cover_path))
+    if not os.path.exists(dest):
+        shutil.copy2(cover_path, dest)
+    return dest
 
 
 @lru_cache(maxsize=None)
-def _completed_cover(cover_path: str) -> PILImage.Image:
-    """Cover art with the completed badge pre-composited onto it.
+def _cover_with_overlay(cover_path: str, overlay_path: str) -> PILImage.Image:
+    """Cover art with a status badge pre-composited onto it.
 
     Two stacked Image widgets over the same cells doesn't work here: Kitty
     rendering via textual-image works by writing special placeholder glyphs
@@ -35,16 +64,103 @@ def _completed_cover(cover_path: str) -> PILImage.Image:
     this — there's only ever one Kitty placement per card.
     """
     base = PILImage.open(cover_path).convert("RGBA")
-    overlay = PILImage.open(COMPLETED_COVER_OVERLAY).convert("RGBA")
+    overlay = PILImage.open(overlay_path).convert("RGBA")
     if overlay.size != base.size:
         overlay = overlay.resize(base.size, PILImage.LANCZOS)
     return PILImage.alpha_composite(base, overlay)
 
 
+class StatusModal(ModalScreen[str | None]):
+    """Small centered dialog for picking a game's status."""
+
+    CSS = """
+    StatusModal {
+        align: center middle;
+    }
+    #status-dialog {
+        width: auto;
+        height: auto;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+    }
+    #status-dialog .dialog-title {
+        text-align: center;
+        text-style: bold;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    #status-dialog Button {
+        width: 32;
+        margin-bottom: 1;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    AUTO_FOCUS = ""
+
+    def __init__(self, game_name: str):
+        super().__init__()
+        self.game_name = game_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="status-dialog"):
+            yield Label(self.game_name, classes="dialog-title")
+            yield Button("Playing", id="playing")
+            yield Button("Backlog", id="backlog")
+            yield Button("Completed", id="completed")
+            yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None if event.button.id == "cancel" else event.button.id)
+
+    def on_click(self, event: events.Click) -> None:
+        if event.widget is self:
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class GameCard(Vertical):
-    def __init__(self, game: Game):
+    def __init__(self, game: Game, show_status_overlay: bool = False):
         super().__init__(classes="game-card")
         self.game = game
+        # Backlog/playing overlays only make sense where a card could be any
+        # status (the search screen) — the main screen's cards are already
+        # grouped under a status heading, so those overlays would be
+        # redundant there. Completed always gets its overlay everywhere.
+        self.show_status_overlay = show_status_overlay
+
+    def on_click(self, event: events.Click) -> None:
+        self._pick_status()
+
+    @work
+    async def _pick_status(self) -> None:
+        status = await self.app.push_screen_wait(StatusModal(self.game.name))
+        if status is None:
+            return
+
+        cover_path = _promote_cover(self.game.cover)
+
+        lib = Library.load()
+        lib.add(
+            Game(
+                name=self.game.name,
+                status=status,
+                release_date=self.game.release_date,
+                cover=cover_path,
+            ),
+            overwrite_status=True,
+        )
+        lib.save()
+
+        self.game.status = status
+        self.game.cover = cover_path
+        self.show_status_overlay = True
+        await self.recompose()
+
+        self.app.refresh_library()
 
     def compose(self) -> ComposeResult:
         # The cover sits in a fixed-height frame so the card's layout stays
@@ -56,8 +172,10 @@ class GameCard(Vertical):
             if self.game.cover and os.path.exists(self.game.cover)
             else UNKNOWN_COVER
         )
+        show_overlay = self.game.status == "completed" or self.show_status_overlay
+        overlay_path = STATUS_COVER_OVERLAYS.get(self.game.status) if show_overlay else None
         cover_image = (
-            _completed_cover(cover) if self.game.status == "completed" else cover
+            _cover_with_overlay(cover, overlay_path) if overlay_path else cover
         )
         with Vertical(classes="cover-frame"):
             yield Image(cover_image, classes="cover")
@@ -87,6 +205,135 @@ class StatusGrid(Vertical):
         with grid:
             for game in self.games:
                 yield GameCard(game)
+
+
+class SearchScreen(Screen):
+    CSS = """
+    SearchScreen {
+        align: center top;
+    }
+    #search-bar {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        align: left middle;
+    }
+    #search-icon {
+        width: 3;
+        height: 3;
+        content-align: center middle;
+    }
+    #search-input {
+        width: 1fr;
+    }
+    #search-results-scroll {
+        height: 1fr;
+        scrollbar-size: 0 0;
+    }
+    #footer-bar {
+        dock: bottom;
+        height: 1;
+        width: 100%;
+        background: $footer-background;
+    }
+    #search-status {
+        width: auto;
+        padding: 0 2;
+        content-align: left middle;
+        color: $text-muted;
+        background: $footer-background;
+    }
+    #footer-bar Footer {
+        dock: none;
+        width: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Back", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="search-bar"):
+            yield Label("\U0001F50D", id="search-icon")
+            yield Input(placeholder="Search for a game...", id="search-input")
+        with VerticalScroll(id="search-results-scroll"):
+            yield Grid(id="search-results-grid", classes="game-grid")
+        with Horizontal(id="footer-bar"):
+            yield Label("", id="search-status")
+            yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#search-input", Input).focus()
+        self.query_one("#search-results-grid").styles.grid_size_columns = (
+            config.get_style()["columns"]
+        )
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        query = event.value.strip()
+        if not query:
+            return
+        self.query_one("#search-status", Label).update("Searching...")
+        self.query_one("#search-results-grid", Grid).remove_children()
+        _reset_search_covers()
+        self._run_search(query)
+
+    @work(exclusive=True, thread=True)
+    def _run_search(self, query: str) -> None:
+        client_id, client_secret = config.get_credentials()
+        if not client_id or not client_secret:
+            self.app.call_from_thread(
+                self.query_one("#search-status", Label).update,
+                "Missing IGDB credentials.",
+            )
+            return
+
+        try:
+            token = igdb.get_token(client_id, client_secret)
+            candidates = igdb.search_candidates(client_id, token, query, MAX_SEARCH_RESULTS)
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#search-status", Label).update,
+                f"Search failed: {e}",
+            )
+            return
+
+        lib = Library.load()
+        results = []
+        for c in candidates:
+            existing = lib.find(c["name"])
+            if existing and existing.cover and os.path.exists(existing.cover):
+                cover_path = existing.cover
+            elif c["image_id"]:
+                cover_path = igdb.download_cover(
+                    c["image_id"], c["name"], SEARCH_COVERS_DIR
+                )
+            else:
+                cover_path = None
+            game = Game(
+                name=c["name"],
+                status=existing.status if existing else "backlog",
+                release_date=c["release_date"],
+                cover=cover_path,
+            )
+            results.append((game, existing is not None))
+
+        self.app.call_from_thread(self._display_results, results)
+
+    def _display_results(self, results: list[tuple[Game, bool]]) -> None:
+        if not results:
+            status = "No results found."
+        elif len(results) >= MAX_SEARCH_RESULTS:
+            status = f"+{MAX_SEARCH_RESULTS} result(s)"
+        else:
+            status = f"{len(results)} result(s)"
+        self.query_one("#search-status", Label).update(status)
+        grid = self.query_one("#search-results-grid", Grid)
+        for game, in_library in results:
+            grid.mount(GameCard(game, show_status_overlay=in_library))
 
 
 class BacklogApp(App):
@@ -145,12 +392,24 @@ class BacklogApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit", priority=True),
+        Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
         Binding("ctrl+q", "noop", show=False, priority=True),
+        Binding("q", "quit", "Quit"),
+        Binding("s", "search", "Search"),
     ]
 
     def action_noop(self) -> None:
         pass
+
+    def action_search(self) -> None:
+        self.push_screen(SearchScreen())
+
+    def refresh_library(self) -> None:
+        self.library = Library.load()
+        scroll = self.query_one("#scroll-area")
+        scroll.remove_children()
+        for status in ("playing", "backlog", "completed"):
+            scroll.mount(StatusGrid(status, self.library.by_status(status)))
 
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
@@ -171,12 +430,14 @@ class BacklogApp(App):
         # causing the visible background panel. Tradeoff: loses Textual's
         # internal alpha-blend/shading effects, unused here anyway.
         super().__init__(ansi_color=True)
+        _reset_search_covers()
         self.library = Library.load()
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="scroll-area"):
             for status in ("playing", "backlog", "completed"):
                 yield StatusGrid(status, self.library.by_status(status))
+        yield Footer()
 
 
 def _require_credentials() -> tuple[str, str]:

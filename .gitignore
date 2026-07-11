@@ -7,3 +7,4 @@ library.json
 config.json
 covers/*
 !covers/unknown.png
+!covers/_overlay*
