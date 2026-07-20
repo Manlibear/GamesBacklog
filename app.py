@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Games Backlog — Textual TUI with real cover art via Kitty's graphics protocol."""
 
+import json
 import os
 import shutil
 from datetime import date
@@ -17,22 +18,22 @@ from textual_image.widget import Image
 
 import config
 import igdb
-from library import COVERS_DIR, Game, Library
+from library import ASSETS_DIR, COVERS_DIR, Game, Library
 
 STATUS_LABELS = {"playing": "PLAYING", "backlog": "BACKLOG", "completed": "COMPLETED"}
-UNKNOWN_COVER = os.path.join(COVERS_DIR, "unknown.png")
+UNKNOWN_COVER = os.path.join(ASSETS_DIR, "unknown.png")
 MAX_SEARCH_RESULTS = 25
 STATUS_COVER_OVERLAYS = {
-    "completed": os.path.join(COVERS_DIR, "_overlay_completed.png"),
-    "playing": os.path.join(COVERS_DIR, "_overlay_playing.png"),
-    "backlog": os.path.join(COVERS_DIR, "_overlay_backlog.png"),
+    "completed": os.path.join(ASSETS_DIR, "_overlay_completed.png"),
+    "playing": os.path.join(ASSETS_DIR, "_overlay_playing.png"),
+    "backlog": os.path.join(ASSETS_DIR, "_overlay_backlog.png"),
 }
 
 # Search results get their covers downloaded here rather than into COVERS_DIR
 # directly, since most searches never get added — this dir is wiped on every
 # app start and every new search, and a cover only earns a permanent home in
 # COVERS_DIR once its game is actually marked with a status.
-SEARCH_COVERS_DIR = os.path.join(COVERS_DIR, "search")
+SEARCH_COVERS_DIR = os.path.join(COVERS_DIR, ".search")
 
 
 def _reset_search_covers() -> None:
@@ -48,6 +49,39 @@ def _promote_cover(cover_path: str | None) -> str | None:
     if not os.path.exists(dest):
         shutil.copy2(cover_path, dest)
     return dest
+
+
+def search_igdb(query: str, count: int = MAX_SEARCH_RESULTS, offset: int = 0) -> list[dict]:
+    """Searches IGDB, caching covers into SEARCH_COVERS_DIR (reusing the library's
+    own cover when a result is already tracked). Shared by the TUI's search screen
+    and the CLI/widget-facing JSON search."""
+    client_id, client_secret = config.get_credentials()
+    if not client_id or not client_secret:
+        raise RuntimeError("Missing IGDB credentials.")
+
+    token = igdb.get_token(client_id, client_secret)
+    candidates = igdb.search_candidates(client_id, token, query, count, offset)
+
+    lib = Library.load()
+    results = []
+    for c in candidates:
+        existing = lib.find(c["name"])
+        if existing and existing.cover and os.path.exists(existing.cover):
+            cover_path = existing.cover
+        elif c["image_id"]:
+            cover_path = igdb.download_cover(c["image_id"], c["name"], SEARCH_COVERS_DIR)
+        else:
+            cover_path = None
+        results.append(
+            {
+                "name": c["name"],
+                "release_date": c["release_date"],
+                "cover": cover_path,
+                "status": existing.status if existing else None,
+                "in_library": existing is not None,
+            }
+        )
+    return results
 
 
 @lru_cache(maxsize=None)
@@ -283,17 +317,8 @@ class SearchScreen(Screen):
 
     @work(exclusive=True, thread=True)
     def _run_search(self, query: str) -> None:
-        client_id, client_secret = config.get_credentials()
-        if not client_id or not client_secret:
-            self.app.call_from_thread(
-                self.query_one("#search-status", Label).update,
-                "Missing IGDB credentials.",
-            )
-            return
-
         try:
-            token = igdb.get_token(client_id, client_secret)
-            candidates = igdb.search_candidates(client_id, token, query, MAX_SEARCH_RESULTS)
+            raw_results = search_igdb(query, MAX_SEARCH_RESULTS)
         except Exception as e:
             self.app.call_from_thread(
                 self.query_one("#search-status", Label).update,
@@ -301,25 +326,18 @@ class SearchScreen(Screen):
             )
             return
 
-        lib = Library.load()
-        results = []
-        for c in candidates:
-            existing = lib.find(c["name"])
-            if existing and existing.cover and os.path.exists(existing.cover):
-                cover_path = existing.cover
-            elif c["image_id"]:
-                cover_path = igdb.download_cover(
-                    c["image_id"], c["name"], SEARCH_COVERS_DIR
-                )
-            else:
-                cover_path = None
-            game = Game(
-                name=c["name"],
-                status=existing.status if existing else "backlog",
-                release_date=c["release_date"],
-                cover=cover_path,
+        results = [
+            (
+                Game(
+                    name=r["name"],
+                    status=r["status"] or "backlog",
+                    release_date=r["release_date"],
+                    cover=r["cover"],
+                ),
+                r["in_library"],
             )
-            results.append((game, existing is not None))
+            for r in raw_results
+        ]
 
         self.app.call_from_thread(self._display_results, results)
 
@@ -628,6 +646,21 @@ def cli_search(query: str, count: int = 10) -> None:
     _print_candidates(candidates)
 
 
+def cli_search_json(query: str, count: int = MAX_SEARCH_RESULTS, offset: int = 0) -> None:
+    """Search IGDB and print JSON results — used by the Noctalia bar widget,
+    which has no direct IGDB/library access of its own. Only wipes the search
+    cover cache on the first page (offset 0) — a "load more" page reuses it, since
+    wiping it would delete covers already displayed for the previous page."""
+    if offset == 0:
+        _reset_search_covers()
+    try:
+        results = search_igdb(query, count, offset)
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        raise SystemExit(1)
+    print(json.dumps(results))
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -655,10 +688,20 @@ if __name__ == "__main__":
         metavar="NAME",
         help="Toggle skip-update flag for a game (excludes it from -u)",
     )
+    group.add_argument(
+        "--search-json",
+        metavar="QUERY",
+        help="Search IGDB, print JSON results (used by the Noctalia bar widget)",
+    )
     parser.add_argument(
         "-c",
         metavar="COUNT",
         help="Numbers of items to returns for a search/add request",
+    )
+    parser.add_argument(
+        "--offset",
+        metavar="OFFSET",
+        help="Result offset for --search-json, for paging (used by the Noctalia bar widget)",
     )
     args = parser.parse_args()
 
@@ -684,5 +727,11 @@ if __name__ == "__main__":
         cli_update_unreleased()
     elif args.su:
         cli_toggle_skip(args.su)
+    elif args.search_json:
+        cli_search_json(
+            args.search_json,
+            int(args.c) if args.c else MAX_SEARCH_RESULTS,
+            int(args.offset) if args.offset else 0,
+        )
     else:
         BacklogApp().run()

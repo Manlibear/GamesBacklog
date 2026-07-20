@@ -68,13 +68,16 @@ def lookup_game(client_id: str, token: str, game_name: str) -> tuple[str, str | 
     return matched_name, date, image_id
 
 
-def search_candidates(client_id: str, token: str, query: str, limit: int = 10) -> list[dict]:
+def search_candidates(
+    client_id: str, token: str, query: str, limit: int = 10, offset: int = 0
+) -> list[dict]:
     """Returns raw IGDB search results (name, release date, cover image_id) for
     disambiguation — unlike lookup_game, doesn't narrow down to a single best guess."""
     body = (
         f'search "{query}"; '
         "fields name,first_release_date,cover.image_id,summary; "
-        f"limit {limit};"
+        f"limit {limit}; "
+        f"offset {offset};"
     ).encode()
     req = urllib.request.Request(
         "https://api.igdb.com/v4/games",

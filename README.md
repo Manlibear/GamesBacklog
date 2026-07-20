@@ -98,10 +98,11 @@ bug in this app.
 
 ## Data
 
-`library.json` (gitignored) holds your actual backlog — a flat list of games with `name`,
-`status` (`playing`/`backlog`/`completed`), `release_date`, `cover` (path into `covers/`), and
-`skip_update`. `covers/unknown.png` is the shipped fallback image used when a game has no cover
-art; everything else in `covers/` is gitignored (downloaded per-user).
+`~/.local/share/gamesbacklog/library.json` holds your actual backlog — a flat list of games with
+`name`, `status` (`playing`/`backlog`/`completed`), `release_date`, `cover` (path into
+`~/.local/share/gamesbacklog/covers/`), and `skip_update`. That covers directory is entirely
+downloaded per-user data, created automatically on first run. `assets/unknown.png` (shipped in
+this repo) is the fallback image used when a game has no cover art.
 
 ## License
 

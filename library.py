@@ -5,8 +5,12 @@ import os
 from dataclasses import asdict, dataclass, field
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-LIBRARY_PATH = os.path.join(ROOT, "library.json")
-COVERS_DIR = os.path.join(ROOT, "covers")
+ASSETS_DIR = os.path.join(ROOT, "assets")
+
+DATA_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "gamesbacklog")
+LIBRARY_PATH = os.path.join(DATA_DIR, "library.json")
+COVERS_DIR = os.path.join(DATA_DIR, "covers")
+os.makedirs(COVERS_DIR, exist_ok=True)
 
 STATUSES = ("playing", "backlog", "completed")
 

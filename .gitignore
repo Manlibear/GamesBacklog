@@ -3,8 +3,5 @@ __pycache__/
 *.pyc
 
 # personal data / secrets — see config.example.json and README
-library.json
+# library.json and downloaded covers now live in ~/.local/share/gamesbacklog
 config.json
-covers/*
-!covers/unknown.png
-!covers/_overlay*
