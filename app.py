@@ -463,7 +463,8 @@ def _require_credentials() -> tuple[str, str]:
     if not client_id or not client_secret:
         print(
             "Set IGDB_CLIENT_ID/IGDB_CLIENT_SECRET env vars, or add igdb_client_id/"
-            "igdb_client_secret to config.json (see config.example.json)."
+            "igdb_client_secret to ~/.local/share/gamesbacklog/config.json "
+            "(see config.example.json)."
         )
         raise SystemExit(1)
     return client_id, client_secret

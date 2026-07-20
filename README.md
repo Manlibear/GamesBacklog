@@ -26,12 +26,13 @@ python3 -m venv .venv
 source .venv/bin/activate       # bash/zsh
 # or: source .venv/bin/activate.fish   # fish
 pip install -r requirements.txt
-cp config.example.json config.json
+mkdir -p ~/.local/share/gamesbacklog
+cp config.example.json ~/.local/share/gamesbacklog/config.json
 ```
 
-Edit `config.json` and fill in your IGDB credentials (or export `IGDB_CLIENT_ID`/
-`IGDB_CLIENT_SECRET` as env vars instead — those take priority over `config.json` if both are
-set).
+Edit `~/.local/share/gamesbacklog/config.json` and fill in your IGDB credentials (or export
+`IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` as env vars instead — those take priority over
+`config.json` if both are set).
 
 ### IGDB credentials
 
@@ -44,7 +45,7 @@ IGDB's API auth goes through Twitch:
    - Category: `Application Integration`
 3. Click **Manage** on the app for your **Client ID**, then **New Secret** for a **Client
    Secret**.
-4. Put both in `config.json`, or export them:
+4. Put both in `~/.local/share/gamesbacklog/config.json`, or export them:
    ```sh
    export IGDB_CLIENT_ID="your-client-id"
    export IGDB_CLIENT_SECRET="your-client-secret"
@@ -75,7 +76,7 @@ python3 app.py          # launch the TUI (browse-only)
 
 ## Configuration
 
-`config.json` (gitignored; copy from `config.example.json`):
+`~/.local/share/gamesbacklog/config.json` (copy from `config.example.json`):
 
 | Key                    | Default   | Meaning                                              |
 | ----------------------- | --------- | ----------------------------------------------------- |

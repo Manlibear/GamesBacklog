@@ -9,8 +9,8 @@ back to the default below.
 import json
 import os
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(ROOT, "config.json")
+DATA_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "gamesbacklog")
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
 DEFAULT_STYLE = {
     "columns": 4,

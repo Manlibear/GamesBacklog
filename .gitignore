@@ -3,5 +3,5 @@ __pycache__/
 *.pyc
 
 # personal data / secrets — see config.example.json and README
-# library.json and downloaded covers now live in ~/.local/share/gamesbacklog
-config.json
+# library.json, config.json, and downloaded covers now live in
+# ~/.local/share/gamesbacklog, not in this repo
